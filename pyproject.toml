@@ -22,6 +22,8 @@ classifiers = [
 ]
 
 dependencies = [
+    "matplotlib>=3.8",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
