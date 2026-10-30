@@ -3,7 +3,7 @@
 import math
 from typing import List, Tuple
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
 
 from ..core.constants import ATTRIBUTES
@@ -14,7 +14,7 @@ from .solver import HybridParetoSolver
 
 
 class BuildVisualizer:
-    """Generates comprehensive diagnostic charts for builds."""
+    """Generates comprehensive diagnostic charts for builds using pure OO figures."""
 
     @staticmethod
     def plot_comparative_suite(
@@ -23,10 +23,12 @@ class BuildVisualizer:
             "Heavy Combat Arts",
             "White Magic",
         ),
-    ) -> plt.Figure:
+    ) -> Figure:
         """Generates a 4-panel diagnostic figure comparing character builds."""
-        fig = plt.figure(figsize=(16, 12), facecolor="#1e1e1e")
-        plt.style.use("dark_background")
+        # --- NEW LOGIC START ---
+        # Explicit Figure instance prevents pyplot thread-locking on window close
+        fig = Figure(figsize=(12, 8), facecolor="#1e1e1e")
+        # --- NEW LOGIC END ---
 
         school_a, school_b = primary_school_pair
 
@@ -52,7 +54,7 @@ class BuildVisualizer:
             ax4, builds[0] if builds else None
         )
 
-        plt.tight_layout()
+        fig.tight_layout()
         return fig
 
     @staticmethod
@@ -65,9 +67,9 @@ class BuildVisualizer:
         ax.set_theta_offset(math.pi / 2)
         ax.set_theta_direction(-1)
         ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(categories, fontsize=9, color="#cccccc")
+        ax.set_xticklabels(categories, fontsize=8, color="#cccccc")
+        ax.tick_params(colors="#888888")
 
-        # Plot level cap outline (Level 50 = 138)
         cap_val = RulesEngine.get_stat_cap_for_level(50)
         ax.plot(
             angles,
@@ -89,9 +91,12 @@ class BuildVisualizer:
             ax.fill(angles, values, color=color, alpha=0.15)
 
         ax.set_title(
-            "Attribute Distribution vs Level 50 Cap", color="#ffffff", pad=15
+            "Attribute Distribution vs Level 50 Cap",
+            color="#ffffff",
+            pad=10,
+            fontsize=10,
         )
-        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        ax.legend(loc="upper right", bbox_to_anchor=(1.35, 1.15), fontsize=7)
 
     @staticmethod
     def _render_pareto(
@@ -112,16 +117,16 @@ class BuildVisualizer:
             infeasible_y,
             color="#5a1d1d",
             alpha=0.3,
-            s=25,
-            label="Infeasible (Stat Deficit)",
+            s=20,
+            label="Infeasible Space",
         )
         ax.scatter(
             feasible_x,
             feasible_y,
             color="#1e4e2e",
             alpha=0.6,
-            s=35,
-            label="Feasible Trade-off Space",
+            s=30,
+            label="Feasible Space",
         )
 
         colors = ["#4fc1ff", "#4ec9b0", "#ce9178", "#dcdcaa"]
@@ -132,17 +137,19 @@ class BuildVisualizer:
                 ra,
                 rb,
                 color=colors[idx % len(colors)],
-                s=120,
+                s=100,
                 edgecolors="white",
-                linewidth=1.5,
+                linewidth=1.2,
                 zorder=5,
                 label=f"{build.name} ({ra}, {rb})",
             )
 
-        ax.set_xlabel(f"{school_a} Rank", color="#cccccc")
-        ax.set_ylabel(f"{school_b} Rank", color="#cccccc")
+        ax.set_xlabel(f"{school_a} Rank", color="#cccccc", fontsize=8)
+        ax.set_ylabel(f"{school_b} Rank", color="#cccccc", fontsize=8)
         ax.set_title(
-            f"Hybrid Pareto Frontier: {school_a} vs {school_b}", color="#ffffff"
+            f"Hybrid Frontier: {school_a} vs {school_b}",
+            color="#ffffff",
+            fontsize=10,
         )
         ax.grid(True, linestyle=":", color="#444444")
         ax.legend(fontsize=7, loc="lower left")
@@ -164,9 +171,7 @@ class BuildVisualizer:
             m = BuildEvaluator.evaluate(b)
             productive.append(m.productive_stat_points)
             slack.append(m.slack_stat_points)
-            stranded.append(
-                m.stranded_skill_points * 2
-            )  # Weighted for visualization
+            stranded.append(m.stranded_skill_points * 2)
             obsolete.append(m.obsolete_skill_points * 2)
 
         ax.bar(
@@ -180,27 +185,29 @@ class BuildVisualizer:
             x - width * 0.5,
             slack,
             width,
-            label="Surplus/Slack Stats",
+            label="Surplus Stats",
             color="#4fc1ff",
         )
         ax.bar(
             x + width * 0.5,
             stranded,
             width,
-            label="Stranded Skill Pts",
+            label="Stranded Pts",
             color="#dcdcaa",
         )
         ax.bar(
             x + width * 1.5,
             obsolete,
             width,
-            label="Obsolete Ranks",
+            label="Obsolete Pts",
             color="#f44747",
         )
 
         ax.set_xticks(x)
         ax.set_xticklabels(names, fontsize=8, color="#cccccc")
-        ax.set_title("Point Efficiency & Loss Breakdown", color="#ffffff")
+        ax.set_title(
+            "Point Efficiency & Loss Breakdown", color="#ffffff", fontsize=10
+        )
         ax.grid(True, linestyle=":", color="#444444", axis="y")
         ax.legend(fontsize=7)
 
@@ -231,19 +238,20 @@ class BuildVisualizer:
             label="Skill Points Budget",
         )
 
-        # Mark Expansion Boundary (OoD Lv30 vs SotP Lv50)
         ax.axvline(
             x=30,
             color="#dcdcaa",
             linestyle="--",
-            linewidth=1.5,
+            linewidth=1.2,
             label="OoD/BoW Cap (Lv30)",
         )
 
-        ax.set_xlabel("Character Level", color="#cccccc")
-        ax.set_ylabel("Accumulated Resource Points", color="#cccccc")
+        ax.set_xlabel("Character Level", color="#cccccc", fontsize=8)
+        ax.set_ylabel("Accumulated Points", color="#cccccc", fontsize=8)
         ax.set_title(
-            "Platinum Progression Trajectory (Levels 1 to 50)", color="#ffffff"
+            "Platinum Progression Trajectory (1-50)",
+            color="#ffffff",
+            fontsize=10,
         )
         ax.grid(True, linestyle=":", color="#444444")
         ax.legend(fontsize=7, loc="upper left")

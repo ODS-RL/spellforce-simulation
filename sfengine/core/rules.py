@@ -257,3 +257,82 @@ class RulesEngine:
             attr: max(0, min_base_needed[attr] - BASE_ATTRIBUTE_VALUE)
             for attr in min_base_needed
         }
+
+    @classmethod
+    def can_increment_stat(
+        cls, build: CharacterBuild, attr: str
+    ) -> Tuple[bool, str]:
+        """Evaluates whether an attribute can be incremented under hard constraints."""
+        report = cls.validate_build(build)
+        if report.stat_points_spent >= report.stat_points_budget:
+            return False, "Stat points budget exhausted."
+
+        current_val = build.get_effective_attribute(attr)
+        max_cap = cls.get_stat_cap_for_level(build.level)
+        if current_val >= max_cap:
+            return (
+                False,
+                f"Attribute cap ({max_cap}) reached for Level {build.level}.",
+            )
+
+        return True, "OK"
+
+    @classmethod
+    def can_increment_school(
+        cls, build: CharacterBuild, school: str
+    ) -> Tuple[bool, str]:
+        """Evaluates whether a major school can be incremented under hard constraints."""
+        report = cls.validate_build(build)
+        if report.skill_points_spent >= report.skill_points_budget:
+            return False, "Skill points budget exhausted."
+
+        current_rank = build.schools.get(school, 0)
+        max_cap = cls.get_max_skill_rank_for_level(build.level)
+        if current_rank >= max_cap:
+            return (
+                False,
+                f"Skill rank cap ({max_cap}) reached for Level {build.level}.",
+            )
+
+        next_rank = current_rank + 1
+        req_lvl, s1, r1, s2, r2 = cls.get_skill_prerequisites(school, next_rank)
+        if build.level < req_lvl:
+            return (
+                False,
+                f"Requires Character Level {req_lvl} (Current: {build.level}).",
+            )
+
+        curr_s1 = build.get_effective_attribute(s1)
+        if curr_s1 < r1:
+            return False, f"Requires {s1} {r1} (Current: {curr_s1})."
+
+        curr_s2 = build.get_effective_attribute(s2)
+        if curr_s2 < r2:
+            return False, f"Requires {s2} {r2} (Current: {curr_s2})."
+
+        return True, "OK"
+
+    @classmethod
+    def can_increment_spec(
+        cls, build: CharacterBuild, spec: str
+    ) -> Tuple[bool, str]:
+        """Evaluates whether a sub-specialization can be incremented under hard constraints."""
+        report = cls.validate_build(build)
+        if report.skill_points_spent >= report.skill_points_budget:
+            return False, "Skill points budget exhausted."
+
+        parent = cls.get_parent_school_for_spec(spec)
+        parent_rank = build.schools.get(parent, 0)
+        current_rank = build.specializations.get(spec, 0)
+
+        if current_rank >= parent_rank:
+            return False, f"Cannot exceed parent {parent} rank ({parent_rank})."
+
+        max_cap = cls.get_max_skill_rank_for_level(build.level)
+        if current_rank >= max_cap:
+            return (
+                False,
+                f"Skill rank cap ({max_cap}) reached for Level {build.level}.",
+            )
+
+        return True, "OK"

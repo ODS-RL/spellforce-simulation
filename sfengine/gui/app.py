@@ -1,13 +1,11 @@
 """Tkinter GUI character simulator with integrated context inspector."""
 
 import json
-
+from tkinter import filedialog, messagebox, ttk
+import tkinter as tk
 from typing import Dict, Optional
 
-import tkinter as tk
-
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from tkinter import filedialog, messagebox, ttk
 
 from ..core.constants import (
     ATTRIBUTES,
@@ -29,6 +27,17 @@ from .theme import (
 from ..optimizer.evaluator import BuildEvaluator
 from ..optimizer.visualizer import BuildVisualizer
 
+# Standard 3-letter stat display mappings
+STAT_ABBREVIATIONS: Dict[str, str] = {
+    "Strength": "STR",
+    "Stamina": "STA",
+    "Dexterity": "DEX",
+    "Agility": "AGI",
+    "Intelligence": "INT",
+    "Wisdom": "WIS",
+    "Charisma": "CHA",
+}
+
 
 class SpellForceSimulatorApp(tk.Tk):
     """Main desktop application window."""
@@ -36,11 +45,21 @@ class SpellForceSimulatorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("SpellForce Character Simulator & Build Optimizer")
-        self.geometry("1400x900")
+        self.geometry("1100x680")
+        self.minsize(1000, 620)
         self.configure(bg=THEME["bg_dark"])
+
+        # Intercept window closure to ensure graceful process termination
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.current_build = CharacterBuild(name="Champion of Eo", level=30)
         self.comparison_builds = [self.current_build]
+
+        self.stat_widgets: Dict[str, Dict] = {}
+        self.school_widgets: Dict[str, Dict] = {}
+        self.spec_containers: Dict[str, tk.Frame] = {}
+        self.spec_widgets: Dict[str, Dict] = {}
+        self.canvas_widget: Optional[FigureCanvasTkAgg] = None
 
         self._init_styles()
         self._build_layout()
@@ -54,7 +73,7 @@ class SpellForceSimulatorApp(tk.Tk):
             "TNotebook.Tab",
             background=THEME["bg_medium"],
             foreground=THEME["text_secondary"],
-            padding=[12, 6],
+            padding=[10, 4],
             font=FONT_BOLD,
         )
         style.map(
@@ -63,231 +82,246 @@ class SpellForceSimulatorApp(tk.Tk):
             foreground=[("selected", THEME["accent"])],
         )
         style.configure("TFrame", background=THEME["bg_dark"])
-        style.configure(
-            "Card.TFrame",
-            background=THEME["bg_card"],
-            relief="solid",
-            borderwidth=1,
-        )
 
     def _build_layout(self):
-        # 1. Top Global Navigation / Header Bar
-        self.header_frame = tk.Frame(
-            self, bg=THEME["bg_medium"], height=70, padx=15, pady=8
-        )
-        self.header_frame.pack(fill=tk.X, side=tk.TOP)
-        self._build_header()
-
-        # 2. Main Tabs Notebook (Simulator vs Optimizer)
+        # Master Notebook Container
         self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         # Tab 1: Simulator View
         self.sim_tab = tk.Frame(self.notebook, bg=THEME["bg_dark"])
         self.notebook.add(self.sim_tab, text="Character Simulator")
         self._build_simulator_tab()
 
-        # Tab 2: Build Optimizer & Visualizer View
+        # Tab 2: Build Optimizer View
         self.opt_tab = tk.Frame(self.notebook, bg=THEME["bg_dark"])
         self.notebook.add(self.opt_tab, text="Optimizer & Diagnostics")
         self._build_optimizer_tab()
 
-    def _build_header(self):
-        # Build Name & Level Stepper
-        name_lbl = tk.Label(
-            self.header_frame,
-            text="Avatar Level:",
-            bg=THEME["bg_medium"],
-            fg=THEME["text_secondary"],
-            font=FONT_BOLD,
-        )
-        name_lbl.pack(side=tk.LEFT, padx=5)
-
-        self.level_var = tk.IntVar(value=self.current_build.level)
-        self.btn_lvl_down = tk.Button(
-            self.header_frame,
-            text="◀",
-            bg=THEME["bg_card"],
-            fg=THEME["text_primary"],
-            font=FONT_BOLD,
-            width=2,
-            command=lambda: self._step_level(-1),
-        )
-        self.btn_lvl_down.pack(side=tk.LEFT)
-
-        self.lbl_level = tk.Label(
-            self.header_frame,
-            textvariable=self.level_var,
-            bg=THEME["bg_card"],
-            fg=THEME["accent"],
-            font=FONT_TITLE,
-            width=3,
-        )
-        self.lbl_level.pack(side=tk.LEFT, padx=2)
-
-        self.btn_lvl_up = tk.Button(
-            self.header_frame,
-            text="▶",
-            bg=THEME["bg_card"],
-            fg=THEME["text_primary"],
-            font=FONT_BOLD,
-            width=2,
-            command=lambda: self._step_level(1),
-        )
-        self.btn_lvl_up.pack(side=tk.LEFT)
-
-        # Campaign Presets
-        tk.Button(
-            self.header_frame,
-            text="Preset: OoD (Lv30)",
-            bg=THEME["bg_card"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
-            command=lambda: self._set_level(30),
-        ).pack(side=tk.LEFT, padx=10)
-        tk.Button(
-            self.header_frame,
-            text="Preset: SotP (Lv50)",
-            bg=THEME["bg_card"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
-            command=lambda: self._set_level(50),
-        ).pack(side=tk.LEFT)
-
-        # Resource Pool Status Cards
-        self.lbl_stat_pool = tk.Label(
-            self.header_frame,
-            text="Stat Points: --",
-            bg=THEME["bg_medium"],
-            fg=THEME["text_primary"],
-            font=FONT_BOLD,
-        )
-        self.lbl_stat_pool.pack(side=tk.LEFT, padx=20)
-
-        self.lbl_skill_pool = tk.Label(
-            self.header_frame,
-            text="Skill Points: --",
-            bg=THEME["bg_medium"],
-            fg=THEME["text_primary"],
-            font=FONT_BOLD,
-        )
-        self.lbl_skill_pool.pack(side=tk.LEFT, padx=10)
-
-        # Status Alert Banner
-        self.lbl_alert = tk.Label(
-            self.header_frame,
-            text="Status: Valid",
-            bg=THEME["bg_medium"],
-            fg=THEME["success"],
-            font=FONT_BOLD,
-        )
-        self.lbl_alert.pack(side=tk.RIGHT, padx=15)
-
     def _build_simulator_tab(self):
-        # 3-Column Layout: Left (Attributes), Center (Skill Trees), Right (Context Inspector)
-        self.sim_tab.columnconfigure(0, weight=3)
-        self.sim_tab.columnconfigure(1, weight=5)
-        self.sim_tab.columnconfigure(2, weight=4)
+        # 2-Column Split: Left = Schools Tree (55%), Right = Stats & Inspector (45%)
+        self.sim_tab.columnconfigure(0, weight=11)
+        self.sim_tab.columnconfigure(1, weight=9)
         self.sim_tab.rowconfigure(0, weight=1)
 
-        # Col 1: Attributes Panel
-        self.attr_card = tk.LabelFrame(
-            self.sim_tab,
-            text=" Attributes (Stats) ",
-            bg=THEME["bg_card"],
-            fg=THEME["accent"],
-            font=FONT_HEADER,
-            padx=10,
-            pady=10,
-        )
-        self.attr_card.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        self._build_attributes_panel()
-
-        # Col 2: Skills & Specializations Panel
+        # Left Column: Combat Arts & Magic Schools
         self.skills_card = tk.LabelFrame(
             self.sim_tab,
             text=" Combat Arts & Magic Schools ",
             bg=THEME["bg_card"],
             fg=THEME["accent"],
             font=FONT_HEADER,
-            padx=10,
-            pady=10,
+            padx=6,
+            pady=6,
         )
-        self.skills_card.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
-        self._build_skills_panel()
+        self.skills_card.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self._build_skills_tree()
 
-        # Col 3: Integrated Context Inspector (No floating popups)
-        self.inspector_card = tk.LabelFrame(
-            self.sim_tab,
-            text=" Integrated Context Inspector ",
+        # Right Column Container
+        self.right_container = tk.Frame(self.sim_tab, bg=THEME["bg_dark"])
+        self.right_container.grid(
+            row=0, column=1, sticky="nsew", padx=4, pady=4
+        )
+        self.right_container.columnconfigure(0, weight=1)
+        self.right_container.rowconfigure(1, weight=1)
+
+        # Right Top: Level Stepper & Resource Pools
+        self._build_level_and_pools_card()
+
+        # Right Middle: Attributes (Stats) Grid
+        self._build_attributes_grid()
+
+        # Right Bottom: Context Inspector & Actions
+        self._build_inspector_card()
+
+    def _build_level_and_pools_card(self):
+        ctrl_card = tk.LabelFrame(
+            self.right_container,
+            text=" Avatar Progression & Resource Pools ",
             bg=THEME["bg_card"],
             fg=THEME["accent"],
             font=FONT_HEADER,
-            padx=10,
-            pady=10,
+            padx=8,
+            pady=4,
         )
-        self.inspector_card.grid(row=0, column=2, sticky="nsew", padx=5, pady=5)
-        self._build_inspector_panel()
+        ctrl_card.pack(fill=tk.X, pady=(0, 4))
 
-    def _build_attributes_panel(self):
+        # Level Stepper Row
+        lvl_row = tk.Frame(ctrl_card, bg=THEME["bg_card"])
+        lvl_row.pack(fill=tk.X, pady=2)
+
+        tk.Label(
+            lvl_row,
+            text="Level:",
+            bg=THEME["bg_card"],
+            fg=THEME["text_secondary"],
+            font=FONT_BOLD,
+        ).pack(side=tk.LEFT)
+
+        self.level_var = tk.IntVar(value=self.current_build.level)
+        tk.Button(
+            lvl_row,
+            text="◀",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+            width=2,
+            pady=0,
+            command=lambda: self._step_level(-1),
+        ).pack(side=tk.LEFT, padx=3)
+
+        self.lbl_level = tk.Label(
+            lvl_row,
+            textvariable=self.level_var,
+            bg=THEME["bg_dark"],
+            fg=THEME["accent"],
+            font=FONT_HEADER,
+            width=3,
+        )
+        self.lbl_level.pack(side=tk.LEFT, padx=2)
+
+        tk.Button(
+            lvl_row,
+            text="▶",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+            width=2,
+            pady=0,
+            command=lambda: self._step_level(1),
+        ).pack(side=tk.LEFT, padx=3)
+
+        # Quick Preset Buttons
+        tk.Button(
+            lvl_row,
+            text="OoD (Lv30)",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_secondary"],
+            font=FONT_REGULAR,
+            pady=0,
+            command=lambda: self._set_level(30),
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            lvl_row,
+            text="SotP (Lv50)",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_secondary"],
+            font=FONT_REGULAR,
+            pady=0,
+            command=lambda: self._set_level(50),
+        ).pack(side=tk.LEFT)
+
+        # Resource Pool Status Labels
+        pools_row = tk.Frame(ctrl_card, bg=THEME["bg_card"])
+        pools_row.pack(fill=tk.X, pady=(4, 2))
+
+        self.lbl_stat_pool = tk.Label(
+            pools_row,
+            text="Stat Points: --",
+            bg=THEME["bg_card"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+        )
+        self.lbl_stat_pool.pack(side=tk.LEFT)
+
+        self.lbl_skill_pool = tk.Label(
+            pools_row,
+            text="Skill Points: --",
+            bg=THEME["bg_card"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+        )
+        self.lbl_skill_pool.pack(side=tk.RIGHT)
+
+        self.lbl_alert = tk.Label(
+            ctrl_card,
+            text="Status: Valid",
+            bg=THEME["bg_card"],
+            fg=THEME["success"],
+            font=FONT_BOLD,
+            anchor="w",
+        )
+        self.lbl_alert.pack(fill=tk.X, pady=(2, 0))
+
+    def _build_attributes_grid(self):
+        attr_card = tk.LabelFrame(
+            self.right_container,
+            text=" Attributes (Stats) ",
+            bg=THEME["bg_card"],
+            fg=THEME["accent"],
+            font=FONT_HEADER,
+            padx=8,
+            pady=4,
+        )
+        attr_card.pack(fill=tk.X, pady=2)
+
+        # 7 Stats Tabular Grid Layout
         self.stat_widgets = {}
-        for attr in ATTRIBUTES:
-            row = tk.Frame(self.attr_card, bg=THEME["bg_card"], pady=6)
-            row.pack(fill=tk.X)
+        for row_idx, attr in enumerate(ATTRIBUTES):
+            abbr = STAT_ABBREVIATIONS[attr]
 
-            lbl = tk.Label(
-                row,
-                text=f"{attr[:4].upper()}:",
-                width=5,
+            lbl_name = tk.Label(
+                attr_card,
+                text=f"{abbr} ({attr}):",
+                width=16,
                 anchor="w",
                 bg=THEME["bg_card"],
                 fg=THEME["text_secondary"],
-                font=FONT_BOLD,
+                font=FONT_REGULAR,
             )
-            lbl.pack(side=tk.LEFT)
-            lbl.bind("<Enter>", lambda e, a=attr: self._inspect_attribute(a))
+            lbl_name.grid(row=row_idx, column=0, sticky="w", pady=1)
+            lbl_name.bind(
+                "<Enter>", lambda e, a=attr: self._inspect_attribute(a)
+            )
 
             btn_sub = tk.Button(
-                row,
+                attr_card,
                 text="-",
                 width=2,
+                pady=0,
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
+                font=FONT_BOLD,
                 command=lambda a=attr: self._step_stat(a, -1),
             )
-            btn_sub.pack(side=tk.LEFT, padx=2)
+            btn_sub.grid(row=row_idx, column=1, padx=2, pady=1)
 
             val_lbl = tk.Label(
-                row,
+                attr_card,
                 text="25",
                 width=4,
                 bg=THEME["bg_dark"],
                 fg=THEME["text_primary"],
                 font=FONT_MONO,
             )
-            val_lbl.pack(side=tk.LEFT, padx=3)
+            val_lbl.grid(row=row_idx, column=2, padx=2, pady=1)
             val_lbl.bind(
                 "<Enter>", lambda e, a=attr: self._inspect_attribute(a)
             )
 
             btn_add = tk.Button(
-                row,
+                attr_card,
                 text="+",
                 width=2,
+                pady=0,
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
+                font=FONT_BOLD,
                 command=lambda a=attr: self._step_stat(a, 1),
             )
-            btn_add.pack(side=tk.LEFT, padx=2)
+            btn_add.grid(row=row_idx, column=3, padx=2, pady=1)
 
             cap_lbl = tk.Label(
-                row,
-                text="/ 98",
+                attr_card,
+                text="/ 98 (+0)",
+                width=10,
+                anchor="w",
                 bg=THEME["bg_card"],
                 fg=THEME["text_muted"],
                 font=FONT_REGULAR,
             )
-            cap_lbl.pack(side=tk.LEFT, padx=5)
+            cap_lbl.grid(row=row_idx, column=4, padx=4, pady=1)
 
             self.stat_widgets[attr] = {
                 "val": val_lbl,
@@ -296,19 +330,87 @@ class SpellForceSimulatorApp(tk.Tk):
                 "btn_add": btn_add,
             }
 
-        # Auto-Solver Button
+    def _build_inspector_card(self):
+        self.inspector_card = tk.LabelFrame(
+            self.right_container,
+            text=" Integrated Context Inspector ",
+            bg=THEME["bg_card"],
+            fg=THEME["accent"],
+            font=FONT_HEADER,
+            padx=8,
+            pady=4,
+        )
+        self.inspector_card.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+
+        self.insp_title = tk.Label(
+            self.inspector_card,
+            text="Inspection Details",
+            bg=THEME["bg_card"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+            anchor="w",
+        )
+        self.insp_title.pack(fill=tk.X)
+
+        self.insp_subtitle = tk.Label(
+            self.inspector_card,
+            text="Hover over any stat or skill node",
+            bg=THEME["bg_card"],
+            fg=THEME["text_muted"],
+            font=FONT_REGULAR,
+            anchor="w",
+        )
+        self.insp_subtitle.pack(fill=tk.X)
+
+        self.insp_text = tk.Text(
+            self.inspector_card,
+            bg=THEME["bg_dark"],
+            fg=THEME["text_secondary"],
+            font=FONT_REGULAR,
+            height=6,
+            wrap="word",
+            relief="flat",
+            padx=6,
+            pady=6,
+        )
+        self.insp_text.pack(fill=tk.BOTH, expand=True, pady=4)
+
+        # Action Buttons Docked at Bottom
+        btn_dock = tk.Frame(self.inspector_card, bg=THEME["bg_card"])
+        btn_dock.pack(fill=tk.X, side=tk.BOTTOM, pady=2)
+
         tk.Button(
-            self.attr_card,
-            text="Auto-Resolve Minimal Stats",
+            btn_dock,
+            text="Auto-Resolve Stats",
             bg=THEME["accent"],
             fg="white",
             font=FONT_BOLD,
-            pady=6,
+            pady=2,
             command=self._auto_resolve_stats,
-        ).pack(fill=tk.X, side=tk.BOTTOM, pady=10)
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
-    def _build_skills_panel(self):
-        # Scrollable Canvas for 7 Schools & 22 Specializations
+        tk.Button(
+            btn_dock,
+            text="Export JSON",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            font=FONT_REGULAR,
+            pady=2,
+            command=self._export_json,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        tk.Button(
+            btn_dock,
+            text="Import JSON",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            font=FONT_REGULAR,
+            pady=2,
+            command=self._import_json,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+    def _build_skills_tree(self):
+        # Scrollable Canvas Container
         canvas = tk.Canvas(
             self.skills_card, bg=THEME["bg_card"], highlightthickness=0
         )
@@ -327,17 +429,20 @@ class SpellForceSimulatorApp(tk.Tk):
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.skill_widgets = {}
+        self.school_widgets = {}
+        self.spec_containers = {}
+        self.spec_widgets = {}
+
         for school, specs in SCHOOL_TREE.items():
             s_box = tk.Frame(
                 self.scroll_frame,
                 bg=THEME["bg_medium"],
-                pady=4,
-                padx=5,
+                pady=2,
+                padx=4,
                 relief="groove",
                 borderwidth=1,
             )
-            s_box.pack(fill=tk.X, pady=4, padx=2)
+            s_box.pack(fill=tk.X, pady=2, padx=2)
 
             # Major School Row
             s_row = tk.Frame(s_box, bg=THEME["bg_medium"])
@@ -358,8 +463,10 @@ class SpellForceSimulatorApp(tk.Tk):
                 s_row,
                 text="-",
                 width=2,
+                pady=0,
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
+                font=FONT_BOLD,
                 command=lambda s=school: self._step_school(s, -1),
             )
             btn_s_sub.pack(side=tk.LEFT)
@@ -379,23 +486,28 @@ class SpellForceSimulatorApp(tk.Tk):
                 s_row,
                 text="+",
                 width=2,
+                pady=0,
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
+                font=FONT_BOLD,
                 command=lambda s=school: self._step_school(s, 1),
             )
             btn_s_add.pack(side=tk.LEFT)
 
-            self.skill_widgets[school] = {
+            self.school_widgets[school] = {
                 "val": s_val,
                 "btn_add": btn_s_add,
                 "btn_sub": btn_s_sub,
                 "label": s_lbl,
             }
 
-            # Sub-Specializations Indented Under School
+            # Sub-Specializations Container (Hidden by default when parent rank is 0)
+            spec_frame = tk.Frame(s_box, bg=THEME["bg_medium"])
+            self.spec_containers[school] = spec_frame
+
             for spec in specs:
-                sp_row = tk.Frame(s_box, bg=THEME["bg_medium"])
-                sp_row.pack(fill=tk.X, padx=15, pady=1)
+                sp_row = tk.Frame(spec_frame, bg=THEME["bg_medium"])
+                sp_row.pack(fill=tk.X, padx=12, pady=1)
 
                 sp_lbl = tk.Label(
                     sp_row,
@@ -415,6 +527,7 @@ class SpellForceSimulatorApp(tk.Tk):
                     sp_row,
                     text="-",
                     width=2,
+                    pady=0,
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
                     command=lambda sp=spec: self._step_spec(sp, -1),
@@ -439,79 +552,27 @@ class SpellForceSimulatorApp(tk.Tk):
                     sp_row,
                     text="+",
                     width=2,
+                    pady=0,
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
                     command=lambda sp=spec: self._step_spec(sp, 1),
                 )
                 btn_sp_add.pack(side=tk.LEFT)
 
-                self.skill_widgets[spec] = {
+                self.spec_widgets[spec] = {
                     "val": sp_val,
                     "btn_add": btn_sp_add,
                     "btn_sub": btn_sp_sub,
                     "label": sp_lbl,
                 }
 
-    def _build_inspector_panel(self):
-        # Seamlessly integrated inspector (replaces pop-up tooltips)
-        self.insp_title = tk.Label(
-            self.inspector_card,
-            text="Inspection Details",
-            bg=THEME["bg_card"],
-            fg=THEME["text_primary"],
-            font=FONT_TITLE,
-        )
-        self.insp_title.pack(anchor="w", pady=(0, 5))
-
-        self.insp_type = tk.Label(
-            self.inspector_card,
-            text="Hover over any stat or skill node",
-            bg=THEME["bg_card"],
-            fg=THEME["text_muted"],
-            font=FONT_REGULAR,
-        )
-        self.insp_type.pack(anchor="w")
-
-        ttk.Separator(self.inspector_card).pack(fill=tk.X, pady=8)
-
-        self.insp_text = tk.Text(
-            self.inspector_card,
-            bg=THEME["bg_dark"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
-            wrap="word",
-            relief="flat",
-            padx=8,
-            pady=8,
-        )
-        self.insp_text.pack(fill=tk.BOTH, expand=True)
-
-        # Save/Load buttons
-        btn_box = tk.Frame(self.inspector_card, bg=THEME["bg_card"])
-        btn_box.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
-        tk.Button(
-            btn_box,
-            text="Export Build JSON",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_primary"],
-            command=self._export_json,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-        tk.Button(
-            btn_box,
-            text="Import Build JSON",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_primary"],
-            command=self._import_json,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-
     def _build_optimizer_tab(self):
         self.opt_tab.columnconfigure(0, weight=1)
         self.opt_tab.rowconfigure(0, weight=0)
         self.opt_tab.rowconfigure(1, weight=1)
 
-        # Control Bar
         ctrl_bar = tk.Frame(
-            self.opt_tab, bg=THEME["bg_medium"], pady=8, padx=10
+            self.opt_tab, bg=THEME["bg_medium"], pady=6, padx=10
         )
         ctrl_bar.grid(row=0, column=0, sticky="ew")
 
@@ -533,14 +594,166 @@ class SpellForceSimulatorApp(tk.Tk):
         )
         self.lbl_opt_score.pack(side=tk.LEFT, padx=15)
 
-        # Matplotlib Canvas Container
         self.chart_container = tk.Frame(self.opt_tab, bg=THEME["bg_dark"])
         self.chart_container.grid(
-            row=1, column=0, sticky="nsew", padx=5, pady=5
+            row=1, column=0, sticky="nsew", padx=4, pady=4
         )
-        self.canvas_widget = None
 
-    # --- Interaction & Inspection Logic ---
+    # --- Interaction Logic: Hard Forward, Soft Backward ---
+
+    def _step_stat(self, attr: str, delta: int):
+        curr_invested = self.current_build.invested_attributes[attr]
+        if delta > 0:
+            allowed, reason = RulesEngine.can_increment_stat(
+                self.current_build, attr
+            )
+            if not allowed:
+                self.insp_title.config(text=f"Blocked: {attr}")
+                self.insp_subtitle.config(text="Cannot increment stat point")
+                self.insp_text.delete("1.0", tk.END)
+                self.insp_text.insert(tk.END, f"⚠️ {reason}")
+                return
+            self.current_build.invested_attributes[attr] = curr_invested + 1
+        else:
+            self.current_build.invested_attributes[attr] = max(
+                0, curr_invested - 1
+            )
+
+        self._update_all_views()
+        self._inspect_attribute(attr)
+
+    def _step_school(self, school: str, delta: int):
+        curr_rank = self.current_build.schools.get(school, 0)
+        if delta > 0:
+            allowed, reason = RulesEngine.can_increment_school(
+                self.current_build, school
+            )
+            if not allowed:
+                self.insp_title.config(text=f"Blocked: {school}")
+                self.insp_subtitle.config(text="Cannot increment school rank")
+                self.insp_text.delete("1.0", tk.END)
+                self.insp_text.insert(tk.END, f"⚠️ {reason}")
+                return
+            self.current_build.schools[school] = curr_rank + 1
+        else:
+            self.current_build.schools[school] = max(0, curr_rank - 1)
+
+        self._update_all_views()
+        self._inspect_school(school)
+
+    def _step_spec(self, spec: str, delta: int):
+        curr_rank = self.current_build.specializations.get(spec, 0)
+        if delta > 0:
+            allowed, reason = RulesEngine.can_increment_spec(
+                self.current_build, spec
+            )
+            if not allowed:
+                self.insp_title.config(text=f"Blocked: {spec}")
+                self.insp_subtitle.config(
+                    text="Cannot increment specialization rank"
+                )
+                self.insp_text.delete("1.0", tk.END)
+                self.insp_text.insert(tk.END, f"⚠️ {reason}")
+                return
+            self.current_build.specializations[spec] = curr_rank + 1
+        else:
+            self.current_build.specializations[spec] = max(0, curr_rank - 1)
+
+        self._update_all_views()
+        self._inspect_specialization(spec)
+
+    def _step_level(self, delta: int):
+        """Soft backward de-leveling: retains points while flagging violations."""
+        new_level = max(
+            1, min(MAX_CHARACTER_LEVEL, self.current_build.level + delta)
+        )
+        self.current_build.level = new_level
+        self.level_var.set(new_level)
+        self._update_all_views()
+
+    def _set_level(self, level: int):
+        self.current_build.level = level
+        self.level_var.set(level)
+        self._update_all_views()
+
+    def _auto_resolve_stats(self):
+        min_invested = RulesEngine.calculate_minimum_required_stats(
+            self.current_build
+        )
+        for attr, val in min_invested.items():
+            self.current_build.invested_attributes[attr] = val
+        self._update_all_views()
+        messagebox.showinfo(
+            "Auto-Resolve Complete",
+            "Invested attributes adjusted to minimal prerequisites.",
+        )
+
+    # --- View Synchronizer & Progressive Disclosure ---
+
+    def _update_all_views(self):
+        report = RulesEngine.validate_build(self.current_build)
+        cap = RulesEngine.get_stat_cap_for_level(self.current_build.level)
+
+        # 1. Update Attributes
+        for attr, w in self.stat_widgets.items():
+            invested = self.current_build.invested_attributes[attr]
+            total = BASE_ATTRIBUTE_VALUE + invested
+            w["val"].config(text=str(total))
+            w["cap"].config(text=f"/ {cap} (+{invested})")
+            w["val"].config(
+                fg=THEME["error"] if total > cap else THEME["text_primary"]
+            )
+
+        # 2. Update Schools & Progressive Disclosure
+        for school, s_widgets in self.school_widgets.items():
+            rank = self.current_build.schools.get(school, 0)
+            s_widgets["val"].config(text=str(rank))
+            container = self.spec_containers[school]
+
+            if rank > 0:
+                # Reveal sub-specializations
+                if not container.winfo_ismapped():
+                    container.pack(fill=tk.X, pady=(2, 4))
+            else:
+                # Hide sub-specializations if parent school is 0
+                if container.winfo_ismapped():
+                    container.pack_forget()
+
+        # 3. Update Sub-Specializations
+        for spec, sp_widgets in self.spec_widgets.items():
+            rank = self.current_build.specializations.get(spec, 0)
+            sp_widgets["val"].config(text=str(rank))
+
+        # 4. Update Resource Pools
+        stat_spent = report.stat_points_spent
+        stat_max = report.stat_points_budget
+        stat_rem = stat_max - stat_spent
+        self.lbl_stat_pool.config(
+            text=f"Stats: {stat_rem} rem ({stat_spent}/{stat_max})",
+            fg=THEME["error"] if stat_rem < 0 else THEME["text_primary"],
+        )
+
+        skill_spent = report.skill_points_spent
+        skill_max = report.skill_points_budget
+        skill_rem = skill_max - skill_spent
+        self.lbl_skill_pool.config(
+            text=f"Skills: {skill_rem} rem ({skill_spent}/{skill_max})",
+            fg=THEME["error"] if skill_rem < 0 else THEME["text_primary"],
+        )
+
+        # 5. Alert Status
+        if report.is_valid:
+            self.lbl_alert.config(
+                text="Status: Valid Build", fg=THEME["success"]
+            )
+        else:
+            issue_count = len(report.issues)
+            self.lbl_alert.config(
+                text=f"⚠️ {issue_count} Rule Violation(s) [Over Budget]",
+                fg=THEME["error"],
+            )
+
+    # --- Inspector Feedback ---
 
     def _inspect_attribute(self, attr: str):
         total = self.current_build.get_effective_attribute(attr)
@@ -548,13 +761,11 @@ class SpellForceSimulatorApp(tk.Tk):
         invested = self.current_build.invested_attributes[attr]
 
         self.insp_title.config(text=f"Attribute: {attr}")
-        self.insp_type.config(
+        self.insp_subtitle.config(
             text=f"Base: 25 | Invested: {invested} | Total: {total} / {cap}"
         )
 
-        lines = [
-            f"Natural Maximum at Level {self.current_build.level}: {cap}\n"
-        ]
+        lines = [f"Natural Cap at Level {self.current_build.level}: {cap}\n"]
         if total > cap:
             lines.append(f"⚠️ EXCEEDS LEVEL CAP BY {total - cap} POINT(S)!\n")
 
@@ -582,7 +793,7 @@ class SpellForceSimulatorApp(tk.Tk):
             self.current_build.level
         )
         self.insp_title.config(text=f"School: {school}")
-        self.insp_type.config(
+        self.insp_subtitle.config(
             text=f"Current Rank: {rank} / Max Allowed: {max_rank}"
         )
 
@@ -591,7 +802,7 @@ class SpellForceSimulatorApp(tk.Tk):
             req_lvl, s1, r1, s2, r2 = RulesEngine.get_skill_prerequisites(
                 school, rank
             )
-            lines.append(f"Current Rank {rank} Status:")
+            lines.append(f"Rank {rank} Active:")
             lines.append(
                 f"• Character Level: {self.current_build.level} (Requires {req_lvl})"
             )
@@ -607,7 +818,7 @@ class SpellForceSimulatorApp(tk.Tk):
             n_lvl, n_s1, n_r1, n_s2, n_r2 = RulesEngine.get_skill_prerequisites(
                 school, next_rank
             )
-            lines.append(f"Requirements for Next Rank {next_rank}:")
+            lines.append(f"Requirements for Rank {next_rank}:")
             lines.append(
                 f"• Character Level: {n_lvl} [{'OK' if self.current_build.level >= n_lvl else 'MISSING'}]"
             )
@@ -629,19 +840,17 @@ class SpellForceSimulatorApp(tk.Tk):
         parent_rank = self.current_build.schools.get(parent, 0)
 
         self.insp_title.config(text=f"Specialization: {spec}")
-        self.insp_type.config(
+        self.insp_subtitle.config(
             text=f"Governing Parent: {parent} (Rank {parent_rank})"
         )
 
         lines = [
             f"Current Rank: {rank}",
             f"Parent School Ceiling: {parent_rank}",
-            f"Sub-specializations cannot exceed their parent school rank.",
+            "Specializations are bounded by parent school rank.",
         ]
         if rank < parent_rank:
-            lines.append(
-                f"• Can be raised up to {parent_rank} without further parent investment."
-            )
+            lines.append(f"• Can be upgraded up to Rank {parent_rank}.")
         else:
             lines.append(
                 f"• Must raise parent {parent} before upgrading {spec}."
@@ -650,105 +859,7 @@ class SpellForceSimulatorApp(tk.Tk):
         self.insp_text.delete("1.0", tk.END)
         self.insp_text.insert(tk.END, "\n".join(lines))
 
-    # --- Allocation Steppers ---
-
-    def _step_level(self, delta: int):
-        new_level = max(
-            1, min(MAX_CHARACTER_LEVEL, self.current_build.level + delta)
-        )
-        self.current_build.level = new_level
-        self.level_var.set(new_level)
-        self._update_all_views()
-
-    def _set_level(self, level: int):
-        self.current_build.level = level
-        self.level_var.set(level)
-        self._update_all_views()
-
-    def _step_stat(self, attr: str, delta: int):
-        curr = self.current_build.invested_attributes[attr]
-        new_val = max(0, curr + delta)
-        self.current_build.invested_attributes[attr] = new_val
-        self._update_all_views()
-        self._inspect_attribute(attr)
-
-    def _step_school(self, school: str, delta: int):
-        curr = self.current_build.schools.get(school, 0)
-        new_rank = max(0, min(20, curr + delta))
-        self.current_build.schools[school] = new_rank
-        self._update_all_views()
-        self._inspect_school(school)
-
-    def _step_spec(self, spec: str, delta: int):
-        curr = self.current_build.specializations.get(spec, 0)
-        new_rank = max(0, min(20, curr + delta))
-        self.current_build.specializations[spec] = new_rank
-        self._update_all_views()
-        self._inspect_specialization(spec)
-
-    def _auto_resolve_stats(self):
-        min_invested = RulesEngine.calculate_minimum_required_stats(
-            self.current_build
-        )
-        for attr, val in min_invested.items():
-            self.current_build.invested_attributes[attr] = val
-        self._update_all_views()
-        messagebox.showinfo(
-            "Auto-Resolve Complete",
-            "Invested attributes adjusted to minimal prerequisites.",
-        )
-
-    # --- View Synchronizer ---
-
-    def _update_all_views(self):
-        report = RulesEngine.validate_build(self.current_build)
-        cap = RulesEngine.get_stat_cap_for_level(self.current_build.level)
-
-        # Update Stat Displays
-        for attr, w in self.stat_widgets.items():
-            invested = self.current_build.invested_attributes[attr]
-            total = BASE_ATTRIBUTE_VALUE + invested
-            w["val"].config(text=str(total))
-            w["cap"].config(text=f"/ {cap}")
-            w["val"].config(
-                fg=THEME["error"] if total > cap else THEME["text_primary"]
-            )
-
-        # Update Skill Displays
-        for name, w in self.skill_widgets.items():
-            if name in self.current_build.schools:
-                rank = self.current_build.schools[name]
-            else:
-                rank = self.current_build.specializations[name]
-            w["val"].config(text=str(rank))
-
-        # Update Pools & Header
-        stat_spent = report.stat_points_spent
-        stat_max = report.stat_points_budget
-        stat_rem = stat_max - stat_spent
-        self.lbl_stat_pool.config(
-            text=f"Stat Points: {stat_rem} rem ({stat_spent}/{stat_max})",
-            fg=THEME["error"] if stat_rem < 0 else THEME["text_primary"],
-        )
-
-        skill_spent = report.skill_points_spent
-        skill_max = report.skill_points_budget
-        skill_rem = skill_max - skill_spent
-        self.lbl_skill_pool.config(
-            text=f"Skill Points: {skill_rem} rem ({skill_spent}/{skill_max})",
-            fg=THEME["error"] if skill_rem < 0 else THEME["text_primary"],
-        )
-
-        # Status Alert Banner
-        if report.is_valid:
-            self.lbl_alert.config(
-                text="Status: Valid Build", fg=THEME["success"]
-            )
-        else:
-            issue_count = len(report.issues)
-            self.lbl_alert.config(
-                text=f"⚠️ {issue_count} Rule Violation(s)", fg=THEME["error"]
-            )
+    # --- Serialization & Charts ---
 
     def _export_json(self):
         path = filedialog.asksaveasfilename(
@@ -783,11 +894,21 @@ class SpellForceSimulatorApp(tk.Tk):
             text=f"Efficiency Score: {metrics.overall_score}/100"
         )
 
-        # Clear existing canvas if present
         if self.canvas_widget:
             self.canvas_widget.get_tk_widget().destroy()
+            self.canvas_widget = None
 
         fig = BuildVisualizer.plot_comparative_suite([self.current_build])
         self.canvas_widget = FigureCanvasTkAgg(fig, master=self.chart_container)
         self.canvas_widget.draw()
         self.canvas_widget.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _on_close(self):
+        """Ensures complete process and canvas teardown on window exit."""
+        if self.canvas_widget:
+            try:
+                self.canvas_widget.get_tk_widget().destroy()
+            except Exception:
+                pass
+        self.quit()
+        self.destroy()
