@@ -137,6 +137,50 @@ class BuildVisualizer:
             label="Feasible Space",
         )
 
+        # Add discrete OoD / BoW Rank 12 cap reference markers
+        ax.axvline(
+            x=12,
+            color="#dcdcaa",
+            linestyle=":",
+            linewidth=1,
+            alpha=0.6,
+            label="OoD Cap (Rank 12)",
+        )
+        ax.axhline(
+            y=12,
+            color="#dcdcaa",
+            linestyle=":",
+            linewidth=1,
+            alpha=0.6,
+        )
+
+        colors = ["#4fc1ff", "#4ec9b0", "#ce9178", "#dcdcaa"]
+        for idx, build in enumerate(builds[:4]):
+            ra = build.schools.get(school_a, 0)
+            rb = build.schools.get(school_b, 0)
+            ax.scatter(
+                ra,
+                rb,
+                color=colors[idx % len(colors)],
+                s=100,
+                edgecolors="white",
+                linewidth=1.2,
+                zorder=5,
+                label=f"{build.name} ({ra}, {rb})",
+            )
+
+        ax.set_xlabel(f"{school_a} Rank", color="#cccccc", fontsize=8)
+        ax.set_ylabel(f"{school_b} Rank", color="#cccccc", fontsize=8)
+        ax.set_title(
+            f"Hybrid Frontier: {school_a} vs {school_b}",
+            color="#ffffff",
+            fontsize=10,
+        )
+        ax.grid(True, linestyle=":", color="#444444")
+        ax.legend(
+            fontsize=7, loc="upper right", facecolor="#1e1e1e", framealpha=0.8
+        )
+
         colors = ["#4fc1ff", "#4ec9b0", "#ce9178", "#dcdcaa"]
         for idx, build in enumerate(builds[:4]):
             ra = build.schools.get(school_a, 0)

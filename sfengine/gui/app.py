@@ -284,16 +284,22 @@ class SpellForceSimulatorApp(tk.Tk):
             row_frame = tk.Frame(attr_card, bg=THEME["bg_card"])
             row_frame.pack(fill=tk.X, pady=1)
 
+            # Fixed grid layout guarantees identical column coordinates across all 7 rows
+            row_frame.columnconfigure(0, minsize=125)
+            row_frame.columnconfigure(1, minsize=26)
+            row_frame.columnconfigure(2, minsize=34)
+            row_frame.columnconfigure(3, minsize=26)
+            row_frame.columnconfigure(4, weight=1)
+
             lbl_name = tk.Label(
                 row_frame,
                 text=f"{abbr} ({attr}):",
-                width=16,
                 anchor="w",
                 bg=THEME["bg_card"],
                 fg=THEME["text_secondary"],
-                font=FONT_REGULAR,
+                font=FONT_BOLD,
             )
-            lbl_name.pack(side=tk.LEFT)
+            lbl_name.grid(row=0, column=0, sticky="w")
             lbl_name.bind(
                 "<Enter>", lambda e, a=attr: self._inspect_attribute(a)
             )
@@ -308,7 +314,7 @@ class SpellForceSimulatorApp(tk.Tk):
                 font=FONT_BOLD,
                 command=lambda a=attr: self._step_stat(a, -1),
             )
-            btn_sub.pack(side=tk.LEFT, padx=2)
+            btn_sub.grid(row=0, column=1, padx=2)
 
             val_lbl = tk.Label(
                 row_frame,
@@ -318,7 +324,7 @@ class SpellForceSimulatorApp(tk.Tk):
                 fg=THEME["text_primary"],
                 font=FONT_MONO,
             )
-            val_lbl.pack(side=tk.LEFT, padx=2)
+            val_lbl.grid(row=0, column=2, padx=2)
             val_lbl.bind(
                 "<Enter>", lambda e, a=attr: self._inspect_attribute(a)
             )
@@ -333,7 +339,7 @@ class SpellForceSimulatorApp(tk.Tk):
                 font=FONT_BOLD,
                 command=lambda a=attr: self._step_stat(a, 1),
             )
-            btn_add.pack(side=tk.LEFT, padx=2)
+            btn_add.grid(row=0, column=3, padx=2)
 
             cap_lbl = tk.Label(
                 row_frame,
@@ -343,7 +349,7 @@ class SpellForceSimulatorApp(tk.Tk):
                 fg=THEME["text_muted"],
                 font=FONT_REGULAR,
             )
-            cap_lbl.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+            cap_lbl.grid(row=0, column=4, sticky="w", padx=4)
 
             self.stat_widgets[attr] = {
                 "frame": row_frame,
@@ -480,6 +486,9 @@ class SpellForceSimulatorApp(tk.Tk):
             s_row = tk.Frame(s_box, bg="#1a1a1a")
             s_row.pack(fill=tk.X)
             s_row.columnconfigure(0, weight=1)
+            s_row.columnconfigure(1, minsize=26)
+            s_row.columnconfigure(2, minsize=32)
+            s_row.columnconfigure(3, minsize=26)
 
             s_lbl = tk.Label(
                 s_row,
@@ -550,6 +559,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 sp_row = tk.Frame(spec_frame, bg=THEME["bg_medium"])
                 sp_row.pack(fill=tk.X, expand=True, pady=1)
                 sp_row.columnconfigure(0, weight=1)
+                sp_row.columnconfigure(1, minsize=26)
+                sp_row.columnconfigure(2, minsize=32)
+                sp_row.columnconfigure(3, minsize=26)
 
                 sp_lbl = tk.Label(
                     sp_row,
@@ -572,6 +584,7 @@ class SpellForceSimulatorApp(tk.Tk):
                     pady=0,
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
+                    font=FONT_BOLD,
                     command=lambda sp=spec: self._step_spec(sp, -1),
                 )
                 btn_sp_sub.grid(row=0, column=1, padx=2)
@@ -601,6 +614,7 @@ class SpellForceSimulatorApp(tk.Tk):
                     pady=0,
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
+                    font=FONT_BOLD,
                     command=lambda sp=spec: self._step_spec(sp, 1),
                 )
                 btn_sp_add.grid(row=0, column=3, padx=2)
@@ -643,6 +657,51 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_BOLD,
         )
         self.lbl_active_profile.pack(side=tk.LEFT, padx=10)
+
+        # Interactive Frontier Axis Controls
+        tk.Label(
+            ctrl_bar,
+            text="Frontier:",
+            bg=THEME["bg_medium"],
+            fg=THEME["text_secondary"],
+            font=FONT_BOLD,
+        ).pack(side=tk.LEFT, padx=(12, 2))
+
+        self.combo_frontier_x = ttk.Combobox(
+            ctrl_bar,
+            values=list(SCHOOL_TREE.keys()),
+            state="readonly",
+            width=16,
+            font=FONT_REGULAR,
+        )
+        self.combo_frontier_x.pack(side=tk.LEFT, padx=2)
+        self.combo_frontier_x.bind(
+            "<<ComboboxSelected>>", lambda e: self._render_optimizer_charts()
+        )
+
+        btn_swap = tk.Button(
+            ctrl_bar,
+            text="⇄",
+            bg=THEME["bg_hover"],
+            fg=THEME["text_primary"],
+            font=FONT_BOLD,
+            pady=0,
+            width=2,
+            command=self._swap_frontier_axes,
+        )
+        btn_swap.pack(side=tk.LEFT, padx=2)
+
+        self.combo_frontier_y = ttk.Combobox(
+            ctrl_bar,
+            values=list(SCHOOL_TREE.keys()),
+            state="readonly",
+            width=16,
+            font=FONT_REGULAR,
+        )
+        self.combo_frontier_y.pack(side=tk.LEFT, padx=2)
+        self.combo_frontier_y.bind(
+            "<<ComboboxSelected>>", lambda e: self._render_optimizer_charts()
+        )
 
         tk.Button(
             ctrl_bar,
@@ -791,16 +850,19 @@ class SpellForceSimulatorApp(tk.Tk):
             self.current_build
         )
 
-        # 1. Update Attributes with Broken Stat Red Alert
+        # 1. Update Attributes with unconditionally rendered values and cohesive warning rows
         for attr, w in self.stat_widgets.items():
             invested = self.current_build.invested_attributes[attr]
             total = BASE_ATTRIBUTE_VALUE + invested
 
+            # Synchronize displayed numeric value
+            w["val"].config(text=str(total))
+
             if attr in broken_prereqs:
                 # Broken prerequisite: highlight entire row in crimson
                 w["frame"].config(bg="#4a1818")
-                w["lbl_name"].config(bg="#4a1818", fg="#ff6b6b", font=FONT_BOLD)
-                w["val"].config(fg="#ff6b6b")
+                w["lbl_name"].config(bg="#4a1818", fg="#ff6b6b")
+                w["val"].config(bg="#2d0f0f", fg="#ff6b6b")
                 needed = max(req[1] for req in broken_prereqs[attr])
                 w["cap"].config(
                     text=f"/ {cap} (+{invested}) ⚠️ Req {needed}",
@@ -812,11 +874,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 # Level cap exceeded
                 w["frame"].config(bg=THEME["bg_card"])
                 w["lbl_name"].config(
-                    bg=THEME["bg_card"],
-                    fg=THEME["text_secondary"],
-                    font=FONT_REGULAR,
+                    bg=THEME["bg_card"], fg=THEME["text_secondary"]
                 )
-                w["val"].config(fg=THEME["error"])
+                w["val"].config(bg=THEME["bg_dark"], fg=THEME["error"])
                 w["cap"].config(
                     text=f"/ {cap} (+{invested}) ⚠️ Exceeds Cap",
                     bg=THEME["bg_card"],
@@ -827,11 +887,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 # Normal state
                 w["frame"].config(bg=THEME["bg_card"])
                 w["lbl_name"].config(
-                    bg=THEME["bg_card"],
-                    fg=THEME["text_secondary"],
-                    font=FONT_REGULAR,
+                    bg=THEME["bg_card"], fg=THEME["text_secondary"]
                 )
-                w["val"].config(fg=THEME["text_primary"])
+                w["val"].config(bg=THEME["bg_dark"], fg=THEME["text_primary"])
                 w["cap"].config(
                     text=f"/ {cap} (+{invested})",
                     bg=THEME["bg_card"],
@@ -1219,6 +1277,14 @@ class SpellForceSimulatorApp(tk.Tk):
         self.comparison_builds = [self.current_build]
         self._render_optimizer_charts()
 
+    def _swap_frontier_axes(self):
+        """Swaps X and Y combobox values and refreshes the Pareto frontier plot."""
+        x_val = self.combo_frontier_x.get()
+        y_val = self.combo_frontier_y.get()
+        self.combo_frontier_x.set(y_val)
+        self.combo_frontier_y.set(x_val)
+        self._render_optimizer_charts()
+
     def _render_optimizer_charts(self):
         self.comparison_builds[0] = self.current_build
         self.lbl_active_profile.config(
@@ -1230,11 +1296,41 @@ class SpellForceSimulatorApp(tk.Tk):
             text=f"Efficiency Score: {metrics.overall_score}/100"
         )
 
+        # Dynamic school selection: auto-detect top 2 trained schools if unselected or identical
+        all_schools = list(SCHOOL_TREE.keys())
+        school_x = self.combo_frontier_x.get()
+        school_y = self.combo_frontier_y.get()
+
+        if not school_x or not school_y or school_x == school_y:
+            trained = [
+                s
+                for s, r in sorted(
+                    self.current_build.schools.items(),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )
+                if r > 0
+            ]
+            if len(trained) >= 2:
+                school_x, school_y = trained[0], trained[1]
+            elif len(trained) == 1:
+                school_x = trained[0]
+                school_y = [s for s in all_schools if s != school_x][0]
+            else:
+                school_x = "Heavy Combat Arts"
+                school_y = "White Magic"
+
+            self.combo_frontier_x.set(school_x)
+            self.combo_frontier_y.set(school_y)
+
         if self.canvas_widget:
             self.canvas_widget.get_tk_widget().destroy()
             self.canvas_widget = None
 
-        fig = BuildVisualizer.plot_comparative_suite(self.comparison_builds)
+        fig = BuildVisualizer.plot_comparative_suite(
+            self.comparison_builds,
+            primary_school_pair=(school_x, school_y),
+        )
         self.canvas_widget = FigureCanvasTkAgg(fig, master=self.chart_container)
         self.canvas_widget.draw()
         self.canvas_widget.get_tk_widget().pack(fill=tk.BOTH, expand=True)
