@@ -1,12 +1,20 @@
 """Tkinter GUI character simulator with integrated context inspector."""
 
+import ctypes
 import json
+import io
+import os
+import subprocess
+import sys
 
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Callable, Dict, List, Optional, Tuple
 
 import tkinter as tk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from PIL import Image, ImageGrab
+from tkinter import constants as tkc
 from tkinter import filedialog, messagebox, ttk
 
 from ..core.constants import (
@@ -40,6 +48,190 @@ STAT_ABBREVIATIONS: Dict[str, str] = {
     "Charisma": "CHA",
 }
 
+# -relief
+# RAISED='raised'
+# SUNKEN='sunken'
+# FLAT='flat'
+# RIDGE='ridge'
+# GROOVE='groove'
+# SOLID = 'solid'
+GUI_RELIEF = tkc.GROOVE
+
+
+def copy_image_to_clipboard(img: Image.Image) -> bool:
+    """Copies a PIL image to the system clipboard across Windows, macOS, and Linux."""
+    if sys.platform.startswith("win"):
+        try:
+            output = io.BytesIO()
+            img.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[
+                14:
+            ]  # Strip 14-byte BMP header to obtain CF_DIB
+            output.close()
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            h_mem = kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+            p_mem = kernel32.GlobalLock(h_mem)
+            ctypes.memmove(p_mem, data, len(data))
+            kernel32.GlobalUnlock(h_mem)
+
+            if user32.OpenClipboard(None):
+                user32.EmptyClipboard()
+                user32.SetClipboardData(8, h_mem)  # CF_DIB = 8
+                user32.CloseClipboard()
+                return True
+        except Exception:
+            return False
+    elif sys.platform == "darwin":
+        try:
+            temp_path = "/tmp/_sf_clipboard.png"
+            img.save(temp_path, "PNG")
+            subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    f'set the clipboard to (read (POSIX file "{temp_path}") as «class PNGf»)',
+                ],
+                check=True,
+            )
+            return True
+        except Exception:
+            return False
+    else:
+        # Linux (X11 xclip or Wayland wl-copy)
+        for cmd in [
+            ["xclip", "-selection", "clipboard", "-t", "image/png"],
+            ["wl-copy", "-t", "image/png"],
+        ]:
+            try:
+                output = io.BytesIO()
+                img.save(output, format="PNG")
+                subprocess.run(cmd, input=output.getvalue(), check=True)
+                return True
+            except Exception:
+                continue
+    return False
+
+
+class RoundedButton(tk.Canvas):
+    """Vector-rendered rounded rectangle button with hover and active states."""
+
+    def __init__(
+        self,
+        parent,
+        text: str,
+        command: Optional[Callable] = None,
+        width: int = 90,
+        height: int = 26,
+        radius: int = 8,
+        bg_color: str = THEME["bg_card"],
+        hover_color: str = THEME["bg_hover"],
+        active_color: str = THEME["accent"],
+        text_color: str = THEME["text_primary"],
+        font: Tuple = FONT_BOLD,
+        **kwargs,
+    ):
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            bg=parent["bg"],
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+            **kwargs,
+        )
+        self.text = text
+        self.command = command
+        self.w = width
+        self.h = height
+        self.radius = radius
+        self.normal_bg = bg_color
+        self.hover_bg = hover_color
+        self.active_bg = active_color
+        self.text_color = text_color
+        self.font = font
+        self.current_bg = bg_color
+
+        self.bind("<Configure>", self._on_resize)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self._render()
+
+    def _on_resize(self, event):
+        self.w = event.width
+        self.h = event.height
+        self._render()
+
+    def _render(self):
+        self.delete("all")
+        r = self.radius
+        w, h = self.w, self.h
+        points = [
+            r,
+            0,
+            w - r,
+            0,
+            w,
+            0,
+            w,
+            r,
+            w,
+            h - r,
+            w,
+            h,
+            w - r,
+            h,
+            r,
+            h,
+            0,
+            h,
+            0,
+            h - r,
+            0,
+            r,
+            0,
+            0,
+            r,
+            0,
+        ]
+        self.create_polygon(
+            points,
+            smooth=True,
+            fill=self.current_bg,
+            outline=THEME["border"],
+            width=1,
+        )
+        self.create_text(
+            w / 2,
+            h / 2,
+            text=self.text,
+            fill=self.text_color,
+            font=self.font,
+        )
+
+    def _on_enter(self, _):
+        self.current_bg = self.hover_bg
+        self._render()
+
+    def _on_leave(self, _):
+        self.current_bg = self.normal_bg
+        self._render()
+
+    def _on_press(self, _):
+        self.current_bg = self.active_bg
+        self._render()
+
+    def _on_release(self, _):
+        self.current_bg = self.hover_bg
+        self._render()
+        if self.command:
+            self.command()
+
 
 class SpellForceSimulatorApp(tk.Tk):
     """Main desktop application window."""
@@ -70,7 +262,12 @@ class SpellForceSimulatorApp(tk.Tk):
     def _init_styles(self):
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("TNotebook", background=THEME["bg_dark"], borderwidth=0)
+        style.configure(
+            "TNotebook",
+            background=THEME["bg_dark"],
+            relief=GUI_RELIEF,
+            borderwidth=0,
+        )
         style.configure(
             "TNotebook.Tab",
             background=THEME["bg_medium"],
@@ -82,6 +279,28 @@ class SpellForceSimulatorApp(tk.Tk):
             "TNotebook.Tab",
             background=[("selected", THEME["bg_card"])],
             foreground=[("selected", THEME["accent"])],
+        )
+
+        # Dark Theme Scrollbar Configuration (Removes coarse light/white OS scrollbar)
+        style.configure(
+            "Vertical.TScrollbar",
+            gripcount=0,
+            background="#2a2a2a",
+            darkcolor="#181818",
+            lightcolor="#3c3c3c",
+            troughcolor="#181818",
+            bordercolor="#181818",
+            arrowcolor="#888888",
+            relief=GUI_RELIEF,
+            borderwidth=0,
+        )
+        style.map(
+            "Vertical.TScrollbar",
+            background=[
+                ("active", THEME["accent"]),
+                ("pressed", THEME["accent_hover"]),
+            ],
+            arrowcolor=[("active", "#ffffff")],
         )
 
     def _build_layout(self):
@@ -138,6 +357,10 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_HEADER,
             padx=8,
             pady=4,
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=THEME["border"],
         )
         ctrl_card.pack(fill=tk.X, pady=(0, 4))
 
@@ -162,9 +385,12 @@ class SpellForceSimulatorApp(tk.Tk):
             fg=THEME["text_primary"],
             insertbackground="white",
             font=FONT_BOLD,
-            width=18,
+            width=14,
+            relief=GUI_RELIEF,
+            highlightthickness=1,
+            highlightbackground=THEME["border"],
         )
-        name_entry.pack(side=tk.LEFT, padx=5)
+        name_entry.pack(side=tk.LEFT, padx=4)
 
         # Level Stepper
         tk.Label(
@@ -173,7 +399,7 @@ class SpellForceSimulatorApp(tk.Tk):
             bg=THEME["bg_card"],
             fg=THEME["text_secondary"],
             font=FONT_BOLD,
-        ).pack(side=tk.LEFT, padx=(5, 0))
+        ).pack(side=tk.LEFT, padx=(3, 0))
 
         self.level_var = tk.IntVar(value=self.current_build.level)
         tk.Button(
@@ -184,8 +410,11 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_BOLD,
             width=2,
             pady=0,
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=0,
             command=lambda: self._step_level(-1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=1)
 
         self.lbl_level = tk.Label(
             name_row,
@@ -205,28 +434,48 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_BOLD,
             width=2,
             pady=0,
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=0,
             command=lambda: self._step_level(1),
-        ).pack(side=tk.LEFT, padx=2)
+        ).pack(side=tk.LEFT, padx=1)
 
-        tk.Button(
+        # Rounded Presets, Reset, and Screenshot Buttons
+        RoundedButton(
             name_row,
             text="OoD (30)",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
-            pady=0,
+            width=62,
+            height=22,
             command=lambda: self._set_level(30),
-        ).pack(side=tk.LEFT, padx=3)
+        ).pack(side=tk.LEFT, padx=2)
 
-        tk.Button(
+        RoundedButton(
             name_row,
             text="SotP (50)",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
-            pady=0,
+            width=62,
+            height=22,
             command=lambda: self._set_level(50),
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=2)
+
+        RoundedButton(
+            name_row,
+            text="Reset",
+            width=50,
+            height=22,
+            bg_color="#3a2020",
+            hover_color="#5a2d2d",
+            command=self._reset_build,
+        ).pack(side=tk.LEFT, padx=2)
+
+        RoundedButton(
+            name_row,
+            text="📷 Cap",
+            width=55,
+            height=22,
+            bg_color=THEME["bg_hover"],
+            hover_color=THEME["accent"],
+            command=self._capture_screenshot,
+        ).pack(side=tk.LEFT, padx=2)
 
         # Resource Pool Status Row
         pools_row = tk.Frame(ctrl_card, bg=THEME["bg_card"])
@@ -274,6 +523,10 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_HEADER,
             padx=8,
             pady=4,
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=THEME["border"],
         )
         attr_card.pack(fill=tk.X, pady=2)
 
@@ -312,6 +565,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
                 font=FONT_BOLD,
+                relief=GUI_RELIEF,
+                bd=0,
+                highlightthickness=0,
                 command=lambda a=attr: self._step_stat(a, -1),
             )
             btn_sub.grid(row=0, column=1, padx=2)
@@ -337,6 +593,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
                 font=FONT_BOLD,
+                relief=GUI_RELIEF,
+                bd=0,
+                highlightthickness=0,
                 command=lambda a=attr: self._step_stat(a, 1),
             )
             btn_add.grid(row=0, column=3, padx=2)
@@ -369,6 +628,10 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_HEADER,
             padx=8,
             pady=4,
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=THEME["border"],
         )
         self.inspector_card.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
 
@@ -399,51 +662,62 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_REGULAR,
             height=6,
             wrap="word",
-            relief="flat",
+            relief=GUI_RELIEF,
             padx=6,
             pady=6,
         )
         self.insp_text.pack(fill=tk.BOTH, expand=True, pady=4)
 
-        btn_dock = tk.Frame(self.inspector_card, bg=THEME["bg_card"])
-        btn_dock.pack(fill=tk.X, side=tk.BOTTOM, pady=2)
+        btn_dock = tk.Frame(
+            self.inspector_card,
+            # relief=GUI_RELIEF,
+            bg=THEME["bg_card"],
+        )
+        btn_dock.pack(fill=tk.X, side=tk.BOTTOM, pady=3)
 
-        tk.Button(
+        RoundedButton(
             btn_dock,
             text="Auto-Resolve Stats",
-            bg=THEME["accent"],
-            fg="white",
-            font=FONT_BOLD,
-            pady=2,
+            bg_color=THEME["accent"],
+            hover_color=THEME["accent_hover"],
+            height=26,
             command=self._auto_resolve_stats,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
-        tk.Button(
+        RoundedButton(
             btn_dock,
             text="Export JSON",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_primary"],
-            font=FONT_REGULAR,
-            pady=2,
+            bg_color=THEME["bg_hover"],
+            hover_color=THEME["border"],
+            height=26,
             command=self._export_json,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
-        tk.Button(
+        RoundedButton(
             btn_dock,
             text="Import JSON",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_primary"],
-            font=FONT_REGULAR,
-            pady=2,
+            bg_color=THEME["bg_hover"],
+            hover_color=THEME["border"],
+            height=26,
             command=self._import_json,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
     def _build_skills_tree(self):
-        canvas = tk.Canvas(
-            self.skills_card, bg=THEME["bg_card"], highlightthickness=0
+        self.skills_card.config(
+            relief=GUI_RELIEF,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=THEME["border"],
         )
+        canvas = tk.Canvas(
+            self.skills_card, bg=THEME["bg_card"], highlightthickness=0, bd=0
+        )
+        # Binds the dark-styled ttk scrollbar
         scrollbar = ttk.Scrollbar(
-            self.skills_card, orient="vertical", command=canvas.yview
+            self.skills_card,
+            orient="vertical",
+            command=canvas.yview,
+            style="Vertical.TScrollbar",
         )
         self.scroll_frame = tk.Frame(canvas, bg=THEME["bg_card"])
 
@@ -476,8 +750,10 @@ class SpellForceSimulatorApp(tk.Tk):
                 bg="#1a1a1a",
                 pady=2,
                 padx=4,
-                relief="groove",
-                borderwidth=1,
+                relief=GUI_RELIEF,
+                bd=0,
+                highlightthickness=1,
+                highlightbackground=THEME["border"],
             )
             s_box.pack(fill=tk.X, expand=True, pady=2, padx=2)
             self.school_boxes[school] = s_box
@@ -509,6 +785,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
                 font=FONT_BOLD,
+                relief=GUI_RELIEF,
+                bd=0,
+                highlightthickness=0,
                 command=lambda s=school: self._step_school(s, -1),
             )
             btn_s_sub.grid(row=0, column=1, padx=2)
@@ -535,6 +814,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 bg=THEME["bg_hover"],
                 fg=THEME["text_primary"],
                 font=FONT_BOLD,
+                relief=GUI_RELIEF,
+                bd=0,
+                highlightthickness=0,
                 command=lambda s=school: self._step_school(s, 1),
             )
             btn_s_add.grid(row=0, column=3, padx=2)
@@ -585,6 +867,9 @@ class SpellForceSimulatorApp(tk.Tk):
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
                     font=FONT_BOLD,
+                    relief=GUI_RELIEF,
+                    bd=0,
+                    highlightthickness=0,
                     command=lambda sp=spec: self._step_spec(sp, -1),
                 )
                 btn_sp_sub.grid(row=0, column=1, padx=2)
@@ -615,6 +900,9 @@ class SpellForceSimulatorApp(tk.Tk):
                     bg=THEME["bg_card"],
                     fg=THEME["text_primary"],
                     font=FONT_BOLD,
+                    relief=GUI_RELIEF,
+                    bd=0,
+                    highlightthickness=0,
                     command=lambda sp=spec: self._step_spec(sp, 1),
                 )
                 btn_sp_add.grid(row=0, column=3, padx=2)
@@ -640,14 +928,14 @@ class SpellForceSimulatorApp(tk.Tk):
         )
         ctrl_bar.grid(row=0, column=0, sticky="ew")
 
-        tk.Button(
+        RoundedButton(
             ctrl_bar,
-            text="Refresh Diagnostics",
-            bg=THEME["accent"],
-            fg="white",
-            font=FONT_BOLD,
+            text="Refresh Plots",
+            bg_color=THEME["accent"],
+            hover_color=THEME["accent_hover"],
+            width=100,
             command=self._render_optimizer_charts,
-        ).pack(side=tk.LEFT, padx=5)
+        ).pack(side=tk.LEFT, padx=3)
 
         self.lbl_active_profile = tk.Label(
             ctrl_bar,
@@ -687,6 +975,8 @@ class SpellForceSimulatorApp(tk.Tk):
             font=FONT_BOLD,
             pady=0,
             width=2,
+            relief=GUI_RELIEF,
+            bd=0,
             command=self._swap_frontier_axes,
         )
         btn_swap.pack(side=tk.LEFT, padx=2)
@@ -703,23 +993,31 @@ class SpellForceSimulatorApp(tk.Tk):
             "<<ComboboxSelected>>", lambda e: self._render_optimizer_charts()
         )
 
-        tk.Button(
+        RoundedButton(
             ctrl_bar,
-            text="+ Add Saved Build to Compare",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_primary"],
-            font=FONT_REGULAR,
+            text="+ Add Build",
+            width=85,
+            bg_color=THEME["bg_hover"],
             command=self._add_comparison_build,
-        ).pack(side=tk.LEFT, padx=5)
+        ).pack(side=tk.LEFT, padx=3)
 
-        tk.Button(
+        RoundedButton(
             ctrl_bar,
-            text="Clear Comparison",
-            bg=THEME["bg_hover"],
-            fg=THEME["text_secondary"],
-            font=FONT_REGULAR,
+            text="Clear",
+            width=55,
+            bg_color="#3a2020",
+            hover_color="#5a2d2d",
             command=self._clear_comparison_builds,
-        ).pack(side=tk.LEFT, padx=5)
+        ).pack(side=tk.LEFT, padx=3)
+
+        RoundedButton(
+            ctrl_bar,
+            text="📷 Cap",
+            bg_color=THEME["bg_hover"],
+            hover_color=THEME["border"],
+            width=65,
+            command=self._capture_screenshot,
+        ).pack(side=tk.LEFT, padx=3)
 
         self.lbl_opt_score = tk.Label(
             ctrl_bar,
@@ -771,8 +1069,8 @@ class SpellForceSimulatorApp(tk.Tk):
     def _step_school(self, school: str, delta: int):
         curr_rank = self.current_build.schools.get(school, 0)
         if delta > 0:
-            allowed, reason = RulesEngine.can_increment_school(
-                self.current_build, school
+            allowed, reason, to_claim = RulesEngine.can_increment_school(
+                self.current_build, school, auto_claim_stats=True
             )
             if not allowed:
                 self.insp_title.config(text=f"Blocked: {school}")
@@ -780,6 +1078,9 @@ class SpellForceSimulatorApp(tk.Tk):
                 self.insp_text.delete("1.0", tk.END)
                 self.insp_text.insert(tk.END, f"⚠️ {reason}")
                 return
+            # Auto-claim required governing stats
+            for attr_name, stat_add in to_claim.items():
+                self.current_build.invested_attributes[attr_name] += stat_add
             self.current_build.schools[school] = curr_rank + 1
         else:
             if curr_rank <= 0:
@@ -840,6 +1141,65 @@ class SpellForceSimulatorApp(tk.Tk):
             "Auto-Resolve Complete",
             "Invested attributes adjusted to minimal prerequisites.",
         )
+
+    def _reset_build(self):
+        """Resets the simulator state back to Level 1 with 0 points invested."""
+        if messagebox.askyesno(
+            "Reset Character Build",
+            "Reset avatar back to Level 1 and refund all stat/skill points?",
+        ):
+            name = self.avatar_name_var.get().strip() or "New Avatar"
+            self.current_build = CharacterBuild(name=name, level=1)
+            self.level_var.set(1)
+            self._update_all_views()
+
+    def _capture_screenshot(self):
+        """Captures window bounds, copies image to system clipboard, and saves to screenshots/."""
+        self.update_idletasks()
+        try:
+            x = self.winfo_rootx()
+            y = self.winfo_rooty()
+            w = self.winfo_width()
+            h = self.winfo_height()
+
+            img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+
+            # Ensure screenshots directory exists
+            os.makedirs("screenshots", exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = (
+                "".join(
+                    c
+                    for c in self.current_build.name
+                    if c.isalnum() or c in ("-", "_")
+                )
+                or "Avatar"
+            )
+            filepath = os.path.join(
+                "screenshots", f"{safe_name}_{timestamp}.png"
+            )
+            img.save(filepath, "PNG")
+
+            copied = copy_image_to_clipboard(img)
+            clip_msg = (
+                "copied to clipboard"
+                if copied
+                else "clipboard unsupported on this OS"
+            )
+
+            self.insp_title.config(text="📷 Screenshot Captured")
+            self.insp_subtitle.config(text=f"Status: {clip_msg}")
+            self.insp_text.delete("1.0", tk.END)
+            self.insp_text.insert(
+                tk.END,
+                f"✓ Snapshot successfully taken!\n\n"
+                f"• Image {clip_msg}.\n"
+                f"• Disk copy saved to:\n  {os.path.abspath(filepath)}",
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Screenshot Error", f"Failed to capture snapshot: {e}"
+            )
 
     # --- View Synchronizer & Visual Polish ---
 
@@ -1020,6 +1380,11 @@ class SpellForceSimulatorApp(tk.Tk):
             )
             curr1 = self.current_build.get_effective_attribute(s1)
             curr2 = self.current_build.get_effective_attribute(s2)
+            _, _, def1, _, _, def2, tot_def = (
+                RulesEngine.get_school_stat_requirements(
+                    self.current_build, school, next_rank
+                )
+            )
 
             lines = [f"Prerequisites for Rank {next_rank}:"]
             lines.append(
@@ -1028,13 +1393,23 @@ class SpellForceSimulatorApp(tk.Tk):
             )
             lines.append(
                 f"• {s1}: {curr1}/{r1} "
-                f"[{'✓ OK' if curr1 >= r1 else f'✗ DEFICIT: Need +{r1 - curr1}'}]"
+                f"[{'✓ OK' if def1 == 0 else f'Auto-allocates +{def1}'}]"
             )
             lines.append(
                 f"• {s2}: {curr2}/{r2} "
-                f"[{'✓ OK' if curr2 >= r2 else f'✗ DEFICIT: Need +{r2 - curr2}'}]"
+                f"[{'✓ OK' if def2 == 0 else f'Auto-allocates +{def2}'}]"
             )
-            lines.append("\nCost: 1 Skill Point")
+
+            lines.append("\nCost on Click:")
+            lines.append("• 1 Skill Point")
+            if tot_def > 0:
+                lines.append(
+                    f"• {tot_def} Stat Point(s) automatically claimed (+{def1} {s1}, +{def2} {s2})"
+                )
+            else:
+                lines.append(
+                    "• 0 Stat Points (Prerequisites already satisfied)"
+                )
 
         self.insp_text.delete("1.0", tk.END)
         self.insp_text.insert(tk.END, "\n".join(lines))

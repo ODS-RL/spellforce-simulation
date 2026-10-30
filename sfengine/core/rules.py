@@ -278,13 +278,33 @@ class RulesEngine:
         return True, "OK"
 
     @classmethod
+    def get_school_stat_requirements(
+        cls, build: CharacterBuild, school: str, target_rank: int
+    ) -> Tuple[str, int, int, str, int, int, int]:
+        """Calculates attribute deficits required to reach target school rank.
+
+        Returns:
+            Tuple[s1_name, s1_req, s1_deficit, s2_name, s2_req, s2_deficit, total_deficit]
+        """
+        _, s1, r1, s2, r2 = cls.get_skill_prerequisites(school, target_rank)
+        cur1 = build.get_effective_attribute(s1)
+        cur2 = build.get_effective_attribute(s2)
+        def1 = max(0, r1 - cur1)
+        def2 = max(0, r2 - cur2)
+        return s1, r1, def1, s2, r2, def2, (def1 + def2)
+
+    @classmethod
     def can_increment_school(
-        cls, build: CharacterBuild, school: str
-    ) -> Tuple[bool, str]:
-        """Evaluates whether a major school can be incremented under hard constraints."""
+        cls, build: CharacterBuild, school: str, auto_claim_stats: bool = True
+    ) -> Tuple[bool, str, Dict[str, int]]:
+        """Evaluates whether a major school can be incremented, optionally auto-claiming stats.
+
+        Returns:
+            Tuple[is_allowed, reason_message, stats_to_claim_dict]
+        """
         report = cls.validate_build(build)
         if report.skill_points_spent >= report.skill_points_budget:
-            return False, "Skill points budget exhausted."
+            return False, "Skill points budget exhausted.", {}
 
         current_rank = build.schools.get(school, 0)
         max_cap = cls.get_max_skill_rank_for_level(build.level)
@@ -292,6 +312,7 @@ class RulesEngine:
             return (
                 False,
                 f"Skill rank cap ({max_cap}) reached for Level {build.level}.",
+                {},
             )
 
         next_rank = current_rank + 1
@@ -300,17 +321,58 @@ class RulesEngine:
             return (
                 False,
                 f"Requires Character Level {req_lvl} (Current: {build.level}).",
+                {},
             )
 
-        curr_s1 = build.get_effective_attribute(s1)
-        if curr_s1 < r1:
-            return False, f"Requires {s1} {r1} (Current: {curr_s1})."
+        s1, r1, def1, s2, r2, def2, total_def = (
+            cls.get_school_stat_requirements(build, school, next_rank)
+        )
+        max_stat_cap = cls.get_stat_cap_for_level(build.level)
 
-        curr_s2 = build.get_effective_attribute(s2)
-        if curr_s2 < r2:
-            return False, f"Requires {s2} {r2} (Current: {curr_s2})."
+        if r1 > max_stat_cap:
+            return (
+                False,
+                f"{s1} requirement ({r1}) exceeds Level {build.level} cap ({max_stat_cap}).",
+                {},
+            )
+        if r2 > max_stat_cap:
+            return (
+                False,
+                f"{s2} requirement ({r2}) exceeds Level {build.level} cap ({max_stat_cap}).",
+                {},
+            )
 
-        return True, "OK"
+        if not auto_claim_stats:
+            if def1 > 0:
+                return (
+                    False,
+                    f"Requires {s1} {r1} (Current: {build.get_effective_attribute(s1)}).",
+                    {},
+                )
+            if def2 > 0:
+                return (
+                    False,
+                    f"Requires {s2} {r2} (Current: {build.get_effective_attribute(s2)}).",
+                    {},
+                )
+            return True, "OK", {}
+
+        # Check if avatar has enough stat points remaining to auto-claim
+        stat_rem = report.stat_points_budget - report.stat_points_spent
+        if total_def > stat_rem:
+            return (
+                False,
+                f"Need {total_def} stat points (+{def1} {s1}, +{def2} {s2}), but only {stat_rem} rem.",
+                {},
+            )
+
+        to_claim = {}
+        if def1 > 0:
+            to_claim[s1] = def1
+        if def2 > 0:
+            to_claim[s2] = def2
+
+        return True, "OK", to_claim
 
     @classmethod
     def can_increment_spec(
