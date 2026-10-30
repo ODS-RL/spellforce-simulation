@@ -25,10 +25,18 @@ class BuildVisualizer:
         ),
     ) -> Figure:
         """Generates a 4-panel diagnostic figure comparing character builds."""
-        # --- NEW LOGIC START ---
         # Explicit Figure instance prevents pyplot thread-locking on window close
         fig = Figure(figsize=(12, 8), facecolor="#1e1e1e")
-        # --- NEW LOGIC END ---
+
+        # Explicit margins prevent title, legend, and axis clipping
+        fig.subplots_adjust(
+            top=0.92,
+            bottom=0.09,
+            left=0.07,
+            right=0.95,
+            hspace=0.38,
+            wspace=0.28,
+        )
 
         school_a, school_b = primary_school_pair
 

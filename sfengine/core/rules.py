@@ -1,6 +1,6 @@
 """Game mechanics rules engine and non-destructive validator."""
 
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 from .constants import (
     BASE_ATTRIBUTE_VALUE,
@@ -336,3 +336,52 @@ class RulesEngine:
             )
 
         return True, "OK"
+
+    @classmethod
+    def get_broken_prerequisites(
+        cls, build: CharacterBuild
+    ) -> Dict[str, List[Tuple[str, int, int]]]:
+        """Identifies which attributes fail active school requirements.
+
+        Returns:
+            Dict[attr_name, List[Tuple[school_name, required_stat_val, actual_stat_val]]]
+        """
+        broken: Dict[str, List[Tuple[str, int, int]]] = {}
+        for school, rank in build.schools.items():
+            if rank <= 0:
+                continue
+            _, s1, req1, s2, req2 = cls.get_skill_prerequisites(school, rank)
+            act1 = build.get_effective_attribute(s1)
+            if act1 < req1:
+                broken.setdefault(s1, []).append((school, req1, act1))
+            act2 = build.get_effective_attribute(s2)
+            if act2 < req2:
+                broken.setdefault(s2, []).append((school, req2, act2))
+        return broken
+
+    @classmethod
+    def calculate_cascaded_derank(
+        cls, build: CharacterBuild, school: str
+    ) -> Tuple[int, Dict[str, int]]:
+        """Calculates released points and affected sub-specializations when lowering a school.
+
+        Returns:
+            Tuple[total_released_points, Dict[spec_name, new_clamped_rank]]
+        """
+        curr_school_rank = build.schools.get(school, 0)
+        if curr_school_rank <= 0:
+            return 0, {}
+
+        target_school_rank = curr_school_rank - 1
+        released_points = 1  # 1 point from parent school itself
+        clamped_specs: Dict[str, int] = {}
+
+        specs = SCHOOL_TREE.get(school, [])
+        for spec in specs:
+            spec_rank = build.specializations.get(spec, 0)
+            if spec_rank > target_school_rank:
+                delta = spec_rank - target_school_rank
+                released_points += delta
+                clamped_specs[spec] = target_school_rank
+
+        return released_points, clamped_specs
